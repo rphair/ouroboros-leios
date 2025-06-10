@@ -1,5 +1,101 @@
 # Leios logbook
 
+## 2025-06-09
+
+### Fixes to CI
+
+Outstanding bugs in the CI, [#368](https://github.com/input-output-hk/ouroboros-leios/issues/368) and [#379](https://github.com/input-output-hk/ouroboros-leios/issues/379), have been fixes, so now all of the CI checks pass!
+
+## 2025-06-06
+
+### Formal methods
+
+- Added Full-Short Leios as a special case of Short Leios to the formal spec. Currently in a [separate branch](https://github.com/input-output-hk/ouroboros-leios-formal-spec/tree/yveshauser/full-short-leios)
+- Added trace verification for Full-Short Leios
+
+### Simulation of the pseudo-mainnet topology
+
+[PR #389](https://github.com/input-output-hk/ouroboros-leios/pull/389) includes the design for the 1 through 300 TPS simulations that are being run on [the pseudo-mainnet topology](data/simulation/pseudo-mainnet/).
+
+Already, it is evident that the Rust simulation runs quite slowly on this 10,000-node network, even at low TPS.
+
+- At 1 TPS, an EC2 instance simulated 6 minutes of network time in 10 hours.
+- At 100 TPS, it simulated 2 minutes in 10 hours.
+- At 300 TPS, it simulated 1 minute in 10 hours.
+
+The Haskell simulator is so slow that it will be tricky to get any useful results without running for a more than a week. We'd definitely need to profile it and remove hot spots if we want to run large networks for realistic durations.
+
+Part of the problem is the voluminousness of the simulation log files, which (collectively) will exceed a terabyte for the experiments. To allievate this, the simulation scripts are filtering out minor events from the logs and compressing them as the simulation is run.
+
+### Observations on conflicts, ledger, and incentives
+
+Here are a few personal (@bwbush) observations, reflections, and conclusions on transaction conflicts, ledger design, memory pool, and fees/incentives.
+
+1. Honest duplicate and conflicting transactions will be present in IBs so long as local sortition is used for the IB lottery.
+    - The concurrency period/window for IB production is the fundamental limit on avoiding the inclusion of duplicates and conflicts in IBs.
+    - Memory pool rules can minimize duplicates/conflicts by having nodes act promptly to remove conflicting transactions from their local memory pool as soon as the receive a new IB.
+    - For a given level of throughput, producing fewer but larger IBs will reduce the probability of duplicates because fewer IB producers are active during each others' "light cones". However, at some point enlarging IBs will lengthen the concurrency "blind spot": for a given throughput.
+    - We have previously shown how reducing the probability of two IBs being produced in the same slot will increase the probability that no IB at all is produced in the slot.
+    - Public (global) sortition would open IB producers to denial of service attacks.
+2. So long as there is no collateral required for failed conflicting transactions, adversaries' only disincentive to reduce overall throughput would be their own infrastructure costs.
+    - Successful attack would require lightweight custom adversarial nodes, many network connections to honest nodes, and sophisticated networking. A significant and sustained attack would be costly, and inefficient attacks might hardly be noticed.
+    - Block producers are best compensated for the resources used by conflicting transactions by allocation from the rewards pot.
+    - The alternative of charging collateral on a failed transaction is too at odds with Cardano's longstanding guarantees. This would penalize attackers, but honest parties would also lose collateral on occasion.
+    - The alternative of charging collateral on successful transactions for any failed conflicting ones in IBs opens too larger an attack surface to intentional, adversarial conflicts.
+    - Honest IB producers are naturally incentivized to reduce conflicts because conflicts eat into fees, but this incentive could be amplified by adding a "conflict penalty" to the rewards computation.
+4. The memory pool is fundamentally untrusted with respect to conflicting transactions.
+    - An adversary would be able to thwart or abuse conflict-avoidance schemes at the memory pool level.
+    - Some common-sense optimizations are possible, such as blacklisting a node that supplies transactions obviously in conflict.
+5. Persistent storage of duplicate and conflicting transactions could be reduced through clever editing at the time of EB voting/certification.
+     - All parties voting on an EB are aware of the duplicate and conflict set among the transactions referenced by the IB.
+     - The EB could include a bitmap of which transactions are valid and which can be discarded, and voter would vote on the bitmap.
+     - Cryptographically speaking, IBs can organize transactions in a manner where items can be deleted without affecting the signature of the IB. (For example, transactions can be discarded from the IB according to the bitmap and replaced with just the hash of what was deleted.)
+ 5. It appears that front running can best be eliminated (at the ledger level, but not at the mempool level) by strictly ordering transactions by their IB's slot and VRF.
+     - Other IB and EB ordering proposals create complexity in the ledger rules and would be difficult to fully analyze for vulnerabilities.
+
+## Rust simulation
+
+Implemented random sampling of transactions from the Leios mempool. When transaction traffic is high enough that IBs are completely full, it should ensure that different IBs contain different transactions when possible.
+
+Simulated a Leios variant where IBs contain references to transactions, rather than transaction bodies themselves. This variant assumes that transactions are propagated and stored independently of Leios.
+
+## 2025-06-05
+
+### Semi-realistic mainnet-scale topology
+
+The aim of [the pseudo-mainnet topology](data/simulation/pseudo-mainnet/) is to have a Leios network that is generally representative of the Cardano mainnet:
+
+- Realistic stake distribution
+- Realistic number of stake pools
+- Two relays for each block producer
+- Block producers only connected to their relays
+- 10,000 nodes total
+- Realistic latencies, generally consistent with the [RIPE Atlas](https://atlas.ripe.net/) `ping` dataset
+- Bandwidth consistent with the low end of what is generally available in cloud data centers
+- Node connectivity generally consistent with measurements by the [Cardano Foundation](https://cardanofoundation.org/)
+- Geographic distribution (countries and autonomous systems) consistent with measurements by the [Cardano Foundation](https://cardanofoundation.org/)
+
+| Metric | Value |
+|--------|------:|
+| Total nodes | 10000 |
+| Block producers | 2657 |
+| Relay nodes | 7343 |
+| Total connections | 298756 |
+| Network diameter | 6 hops |
+| Average connections per node | 29.88 |
+| Clustering coefficient | 0.122 |
+| Average latency | 77.0ms ms |
+| Maximum latency | 636.8ms ms |
+| Stake-weighted latency | 0.0ms ms |
+| Bidirectional connections | 10800 |
+| Asymmetry ratio | 92.77% |
+
+This is the first cut at a realistic mainnet-scale topology for Leios, but it likely contain imperfections because several compromises were made during its construction, so as to smooth out inconsistencies in source data. It does pass the topology checks, however, and approximately matches the marginal distributions of key network metrics.
+
+- Network: [topology-v1.yaml](data/simulation/pseudo-mainnet/topology-v1.yaml)
+- Results of [topology checker](topology-checker/): [topology-v1.md](data/simulation/pseudo-mainnet/topology-v1.md)
+- Jupyter notebook used for creating the network: [topology-v1.ipynb](data/simulation/pseudo-mainnet/topology-v1.ipynb)
+
 ## 2025-05-30
 
 ### Analysis of an overcollateralization scheme
